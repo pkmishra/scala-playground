@@ -1,11 +1,13 @@
 package controllers
 
+
+import models._
 import play.api._
 import play.api.mvc._
 import play.api.data._
 import play.api.data.Forms._
 
-import models._
+
 import views._
 
 
@@ -24,19 +26,18 @@ object Ribbits extends Controller {
     }
     def getUserFromOption(user: Option[Account]): Account = user match {
       case Some(account) => account
-      case None => new NullAccount
     }
     getUserFromOption(Account.findByEmail(getLoggedInEmail))
   }
 
   def public = Action { implicit request =>
     val user = getLoggedInUser(request.session)
-    Ok(html.public("Logged in")(user)(createForm(request.session))(RibbitRepository.findAll))
+    Ok(html.public("Logged in")(user)(createForm(request.session))(RibbitRepository.findAll(request.session.get("email").getOrElse(""))))
   }
 
   def createRibbit = Action { implicit request =>
     createForm(request.session).bindFromRequest.fold(
-      formWithErrors => BadRequest(html.public("Logged in")(getLoggedInUser(request.session))(formWithErrors)(RibbitRepository.findAll)),
+      formWithErrors => BadRequest(html.public("Logged in")(getLoggedInUser(request.session))(formWithErrors)(RibbitRepository.findAll(request.session.get("email").getOrElse("")))),
       ribbit => Redirect(routes.Ribbits.public)
     )
   }

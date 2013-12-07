@@ -1,11 +1,12 @@
 package controllers
 
+import _root_.models.Account
 import play.api._
 import play.api.mvc._
 import play.api.data._
 import play.api.data.Forms._
 
-import models._
+
 import views._
 
 object Application extends Controller {
@@ -15,7 +16,8 @@ object Application extends Controller {
       "email" -> text,
       "password" -> text
     ) verifying ("Invalid email or password", result => result match {
-      case (email, password) => Account.authenticate(email, password).isDefined
+      case (email, password) => print( Account.authenticate(email, password))
+        Account.authenticate(email, password).isDefined
     })
   )
   val createForm = Form(
@@ -36,7 +38,7 @@ object Application extends Controller {
   def authenticate = Action { implicit request =>
     loginForm.bindFromRequest.fold(
       formWithErrors => BadRequest(html.index(formWithErrors, createForm)),
-      user => Redirect(routes.Ribbits.public).withSession("email" -> user._1)
+      user => Redirect(routes.Ribbits.public).withSession("email" -> user._1  )
     )
   }
 

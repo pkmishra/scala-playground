@@ -1,67 +1,59 @@
 package models
 
 import org.mindrot.jbcrypt.BCrypt
-import scala.slick.driver.H2Driver.simple._
-import Database.threadLocalSession
+import com.yasuoza.plugin.RedisDB
 
-case class Account(email: String, password: String, name: String)
+case class Account(id: Long, email: String, password: String, name: String)
 
-object User extends Table[(String, String, String)]("USERS"){
-  def email = column[String]("EMAIL", O.PrimaryKey)
-  def password = column[String]("PASSWORD")
-  def name = column[String]("NAME")
-
-  def * = email ~ password ~ name
-}
 
 object Account {
 
   def authenticate(email: String, password: String): Option[Account] = {
-    findByEmail(email).filter { account => BCrypt.checkpw(password, account.password) }
+
+    findByEmail(email).filter {
+      account =>
+        BCrypt.checkpw(password, account.password)
+    }
   }
 
   def create(name: String, email: String, password: String, confirm: String): Option[Account] = {
     if (password != confirm) None
     else {
-      Database.forURL("jdbc:h2:ribbits", driver = "org.h2.Driver") withSession {
-        try {
-          User.ddl.create
-        } catch {
-          case e: org.h2.jdbc.JdbcSQLException => println("Skipping table createion. It already exists.")
-        }
-        User.insert(email, BCrypt.hashpw(password, BCrypt.gensalt()), name)
+      RedisDB.withClient {
+        client =>
+          val uid = client.incr("global:nextuid").get
+          client.set("uid:" + uid + ":email", email)
+          client.set("uid:" + uid + ":name", name)
+          client.set("uid:" + uid + ":password", BCrypt.hashpw(password, BCrypt.gensalt()))
+          client.set("email:" + email + ":uid", uid)
+
       }
       findByEmail(email)
+
     }
   }
 
   def findByEmail(email: String): Option[Account] = findBy("email", email)
 
-  def findByName(name: String): Option[Account] = findBy("name", name)
+  def findByUserId(uid: String): Option[Account] = findBy("uid", uid)
 
-  def findAll(): Seq[Account] = findByName("John Doe").toSeq
 
   def findBy(field: String, value: String): Option[Account] = {
-    val user = Database.forURL("jdbc:h2:ribbits", driver = "org.h2.Driver") withSession {
-      val foundUser = field match {
-        case "email" => for {
-          u <- User if u.email.toLowerCase === value.toLowerCase
-        } yield(u)
-        case "name" => for {
-          u <- User if u.name.toLowerCase === value.toLowerCase
-        } yield(u)
-      }
 
-      foundUser.firstOption
+    RedisDB.withClient {
+      client =>
+        val uid = field match {
+          case "email" => client.get("email:" + value + ":uid")
+          case "uid" => Some(field)
+          case _ => Some("0")
+        }
+
+        if (uid.isDefined) {
+          Some(Account(uid.get.toLong, client.get("uid:" + uid.get + ":email").get, client.get("uid:" + uid.get + ":password").get, client.get("uid:" + uid.get + ":name").get))
+        }
+        else None
     }
 
-    user map {
-      case (email, password, name) => new Account(email, password, name)
-    }
   }
 
-}
-
-class NullAccount(email: String = "not@set", password: String = "", name: String = "Unknown")
-  extends Account(email: String, password: String, name: String)  {
 }

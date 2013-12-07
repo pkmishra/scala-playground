@@ -1,57 +1,52 @@
 package models
 
-import org.mindrot.jbcrypt.BCrypt
-import scala.slick.driver.H2Driver.simple._
-import Database.threadLocalSession
-import java.text.SimpleDateFormat
-import java.util.Calendar
+import com.yasuoza.plugin.RedisDB
+import org.joda.time.DateTime
 
 
 case class RibbitRepository(content: String, sender: String, dateTime: String)
 
 object RibbitRepository {
 
-  object Ribbit extends Table[(String, String, String)]("RIBBITS"){
-    def content = column[String]("CONTENT")
-    def sender = column[String]("SENDER")
-    def dateTime = column[String]("DATETIME", O.PrimaryKey)
 
-    def * = content ~ sender ~ dateTime
+  def create(content: String, sender: Option[String]): (String, String, String, String) = {
+    require(sender.isDefined)
+    RedisDB.withClient {
+      client =>
+            val postId = client.incr("global:nextRibbitId").get
+            println(postId)
+           client.set("ribbit:" + postId + ":post", sender.get + "|" + DateTime.now() + "|" + content)
+            val account = Account.findByEmail(sender.get).get
+
+            val followers = client.smembers("uid:" + account.id + ":followers")
+            if (followers != null && followers.isDefined) {
+              for (follower <- followers) {
+                client.lpush("uid:" + follower + ":posts", postId)
+
+              }
+              client.lpush("global:timeline", postId)
+              client.ltrim("global:timeline", 0, 1000)
+            }
+
+        }
+        findAll(sender.getOrElse("")).last
+
   }
 
-  def create(content: String, sender: Option[String]): (String,String,String,String) = {
-    Database.forURL("jdbc:h2:ribbits", driver = "org.h2.Driver") withSession {
-      try {
-        Ribbit.ddl.create
-      } catch {
-        case e: org.h2.jdbc.JdbcSQLException => println("Skipping table createion. It already exists.")
-      }
+  def findAll(sender: String): Seq[(String, String, String, String)] = {
+    RedisDB.withClient {
+      client =>
+        val postIds = client.lrange("global:timeline", 0, 1000).getOrElse(List())
 
-      def senderEmail = sender match {
-        case Some(email) => email
-        case None => "Unknown@email.address"
-      }
+        val ribbits = for (postId <- postIds if postId.isDefined) yield {
+          client.get[String]("ribbit:" + postId.get + ":post").get.split('|') match {
+            case Array(x, y, z) => (z, x, y, sender)
+            case _ => ("", "", "", sender)
+          }
 
-      Ribbit.insert(content, senderEmail, new SimpleDateFormat("yyyy-MM-dd HH:mm").format(Calendar.getInstance.getTime))
+        }
+       ribbits.toList
     }
-    findAll().last
-  }
-
-  def findAll(): Seq[(String,String,String,String)] = {
-    val allRibbits = Database.forURL("jdbc:h2:ribbits", driver = "org.h2.Driver") withSession {
-      try {
-        Ribbit.ddl.create
-      } catch {
-        case e: org.h2.jdbc.JdbcSQLException => println("Skipping table createion. It already exists.")
-      }
-
-      val foundRibbits = for {
-        r <- Ribbit
-        u <- User if u.email.toLowerCase === r.sender.toLowerCase
-      } yield((r.content, r.sender, r.dateTime, u.name))
-      foundRibbits.list
-    }
-    allRibbits
   }
 
 }
